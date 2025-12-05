@@ -1,0 +1,987 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { Smile, DollarSign, Users, Home, ShoppingCart, History, Lock, TrendingUp, Star, LogIn, User } from 'lucide-react';
+
+// --- KONSTANTA & UTILITY LOCAL STORAGE ---
+
+const PRIMARY_COLOR = 'bg-yellow-400';
+const PRIMARY_TEXT = 'text-blue-900';
+const SECONDARY_COLOR = 'bg-blue-900';
+const SECONDARY_TEXT = 'text-white';
+const PRICE = 5000;
+const SELLER_PASSWORD = 'bertigajualmartabak'; // Kata sandi untuk login penjual
+const ORDER_KEY = 'martabak_orders';
+const REVIEW_KEY = 'martabak_reviews';
+const USER_KEY = 'martabak_current_user';
+
+// Fungsi untuk mendapatkan tanggal pengiriman estimasi (3 hari dari sekarang)
+const getDeliveryDate = () => {
+    const date = new Date();
+    date.setDate(date.getDate() + 3);
+    return date.toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' });
+};
+
+// Fungsi untuk membuat ID unik sederhana
+const generateUniqueId = () => {
+    return Date.now().toString(36) + Math.random().toString(36).substring(2, 9);
+};
+
+// Memuat data dari Local Storage
+const loadData = (key) => {
+    try {
+        const storedData = localStorage.getItem(key);
+        return storedData ? JSON.parse(storedData) : [];
+    } catch (error) {
+        console.error(`Gagal memuat data dari localStorage key ${key}:`, error);
+        return [];
+    }
+};
+
+// Menyimpan data ke Local Storage
+const saveData = (key, data) => {
+    try {
+        localStorage.setItem(key, JSON.stringify(data));
+    } catch (error) {
+        console.error(`Gagal menyimpan data ke localStorage key ${key}:`, error);
+    }
+};
+
+// --- Komponen Utama Aplikasi ---
+const App = () => {
+    // State Aplikasi
+    const [userId, setUserId] = useState(() => {
+        // Inisialisasi userId dari localStorage atau buat yang baru
+        let currentId = localStorage.getItem(USER_KEY);
+        if (!currentId) {
+            currentId = generateUniqueId();
+            localStorage.setItem(USER_KEY, currentId);
+        }
+        return currentId;
+    });
+    
+    const [view, setView] = useState('home'); 
+    const [isSeller, setIsSeller] = useState(localStorage.getItem('isSeller') === 'true');
+    const [isBuyerAccessGranted, setIsBuyerAccessGranted] = useState(localStorage.getItem('isAccessGranted') === 'true' || localStorage.getItem('isSeller') === 'true');
+    const [orders, setOrders] = useState([]);
+    const [reviews, setReviews] = useState([]);
+    const [message, setMessage] = useState('');
+    const [currentOrder, setCurrentOrder] = useState(null);
+
+    // 1. Memuat Data dari Local Storage saat aplikasi dimuat
+    useEffect(() => {
+        const fetchLocalData = () => {
+            // Muat pesanan
+            const localOrders = loadData(ORDER_KEY);
+            // Sort orders newest first
+            localOrders.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            setOrders(localOrders);
+
+            // Muat ulasan
+            setReviews(loadData(REVIEW_KEY));
+        };
+
+        fetchLocalData();
+    }, []); // Hanya berjalan saat mount
+
+    // 2. Fungsi untuk menyimpan pesanan baru ke Local Storage
+    const saveNewOrder = (newOrder) => {
+        const allOrders = loadData(ORDER_KEY);
+        allOrders.push(newOrder);
+        saveData(ORDER_KEY, allOrders);
+        setOrders(allOrders); // Perbarui state
+    };
+
+    // 3. Fungsi untuk menyimpan ulasan baru ke Local Storage
+    const saveNewReview = (newReview) => {
+        const allReviews = loadData(REVIEW_KEY);
+        allReviews.push(newReview);
+        saveData(REVIEW_KEY, allReviews);
+        setReviews(allReviews); // Perbarui state
+    };
+    
+    // 4. Fungsi Login Penjual
+    const handleSellerLogin = (password) => {
+        if (password === SELLER_PASSWORD) {
+            setIsSeller(true);
+            setIsBuyerAccessGranted(true);
+            localStorage.setItem('isSeller', 'true');
+            localStorage.setItem('isAccessGranted', 'true');
+            setView('sellerDashboard');
+            setMessage('Selamat datang, Admin Martabak Mini Mine!');
+        } else {
+            setMessage('Kata sandi penjual salah. Silakan coba lagi.');
+        }
+    };
+
+    // 5. Fungsi Logout / Reset Akses
+    const handleLogout = () => {
+        // Hapus status di Local Storage
+        localStorage.removeItem('isSeller');
+        localStorage.removeItem('isAccessGranted');
+        
+        // Reset state
+        setIsSeller(false);
+        setIsBuyerAccessGranted(false);
+        
+        // Buat ID pengguna baru untuk riwayat baru
+        const newUserId = generateUniqueId();
+        localStorage.setItem(USER_KEY, newUserId);
+        setUserId(newUserId);
+
+        setMessage('Akses telah direset. Silakan pilih peran.');
+        setView('home'); 
+    };
+
+    // 6. Menghitung Total Penjualan dan Pembeli Unik (Memoized)
+    const { totalSales, uniqueBuyers } = useMemo(() => {
+        const sales = orders.reduce((sum, order) => sum + (order.product.price || PRICE), 0);
+        // Dalam konteks local storage, 'name' digunakan sebagai identifikasi pembeli unik
+        const buyers = new Set(orders.map(order => order.name)); 
+        return { totalSales: sales, uniqueBuyers: buyers.size };
+    }, [orders]);
+
+    // --- RENDERER NAVIGASI ---
+    const NavBar = () => {
+        // Hanya tampilkan navigasi penuh jika akses pembeli/penjual telah diberikan
+        if (!isBuyerAccessGranted) return null;
+
+        const navItems = [
+            { id: 'home', icon: Home, label: 'Beranda' },
+            { id: 'history', icon: History, label: 'Riwayat' },
+            { id: 'reviews', icon: Star, label: 'Ulasan' },
+            { id: 'order', icon: ShoppingCart, label: 'Pesan' },
+        ];
+
+        return (
+            <div className={`fixed bottom-0 left-0 right-0 z-50 flex justify-around p-2 ${SECONDARY_COLOR} shadow-lg md:hidden`}>
+                {navItems.map(item => (
+                    <button
+                        key={item.id}
+                        onClick={() => setView(item.id)}
+                        className={`flex flex-col items-center p-1 rounded-md transition-colors duration-200 ${
+                            view === item.id ? `${PRIMARY_COLOR} ${PRIMARY_TEXT}` : `${SECONDARY_TEXT} hover:text-yellow-400`
+                        }`}
+                        title={item.label}
+                    >
+                        <item.icon className="w-5 h-5" />
+                        <span className="text-xs mt-0.5">{item.label}</span>
+                    </button>
+                ))}
+                {isSeller && (
+                    <button
+                        onClick={() => setView('sellerDashboard')}
+                        className={`flex flex-col items-center p-1 rounded-md transition-colors duration-200 ${
+                            view === 'sellerDashboard' ? `${PRIMARY_COLOR} ${PRIMARY_TEXT}` : `${SECONDARY_TEXT} hover:text-yellow-400`
+                        }`}
+                        title={'Dashboard'}
+                    >
+                        <TrendingUp className="w-5 h-5" />
+                        <span className="text-xs mt-0.5">Admin</span>
+                    </button>
+                )}
+                <button
+                    onClick={handleLogout}
+                    className={`flex flex-col items-center p-1 rounded-md transition-colors duration-200 ${SECONDARY_TEXT} hover:text-red-400`}
+                    title={'Reset'}
+                >
+                    <LogIn className="w-5 h-5" />
+                    <span className="text-xs mt-0.5">Reset</span>
+                </button>
+            </div>
+        );
+    };
+
+    // --- RENDERER BERANDA & AKSES (HOME) ---
+    const HomeView = () => {
+        const [password, setPassword] = useState('');
+
+        const products = [
+            { 
+                name: 'Martabak Coklat Mini', 
+                desc: 'Martabak mini dengan taburan coklat meses premium.', 
+                imageUrl: 'https://allofresh.id/blog/wp-content/uploads/2023/08/cara-membuat-martabak-mini-2-768x512.jpg'
+            },
+            { 
+                name: 'Martabak Keju Mini', 
+                desc: 'Martabak mini dengan parutan keju cheddar melimpah.', 
+                imageUrl: 'https://manfaatcara.com/wp-content/uploads/2020/03/af.jpg'
+            },
+        ];
+
+        // Fungsi untuk memberikan akses pembeli
+        const grantBuyerAccess = () => {
+            setIsBuyerAccessGranted(true);
+            localStorage.setItem('isAccessGranted', 'true');
+            setMessage('Selamat datang, Pembeli! Silakan lihat produk kami.');
+             document.getElementById('catalog-section')?.scrollIntoView({ behavior: 'smooth' });
+        };
+
+
+        // Section Pemilihan Peran / Login
+        const RoleSelectionSection = () => {
+            if (isSeller) {
+                return (
+                    <div className={`p-6 ${PRIMARY_COLOR} rounded-2xl shadow-xl mb-8 text-center`}>
+                        <h2 className={`text-3xl font-bold ${PRIMARY_TEXT}`}>
+                            Selamat Datang, Admin!
+                        </h2>
+                        <p className={`${PRIMARY_TEXT} mt-2 mb-4`}>Akses Anda sudah diverifikasi.</p>
+                        <button
+                            onClick={() => setView('sellerDashboard')}
+                            className={`p-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 transition duration-300 shadow-md flex items-center justify-center mx-auto`}
+                        >
+                            <TrendingUp className="w-5 h-5 mr-2" /> Ke Dashboard Penjualan
+                        </button>
+                    </div>
+                );
+            }
+            
+            if (isBuyerAccessGranted) {
+                return (
+                    <div className={`p-6 ${PRIMARY_COLOR} rounded-2xl shadow-xl mb-8 text-center`}>
+                        <h2 className={`text-3xl font-bold ${PRIMARY_TEXT}`}>
+                            Akses Pembeli Diberikan!
+                        </h2>
+                        <p className={`${PRIMARY_TEXT} mt-2 mb-4`}>Silakan gulir ke bawah untuk melihat katalog produk.</p>
+                        <button
+                            onClick={() => setView('order')}
+                            className={`p-3 bg-blue-700 text-white rounded-xl font-bold hover:bg-blue-600 transition duration-300 shadow-md flex items-center justify-center mx-auto`}
+                        >
+                            <ShoppingCart className="w-5 h-5 mr-2" /> Langsung ke Pemesanan
+                        </button>
+                    </div>
+                );
+            }
+
+            return (
+                <div className={`w-full max-w-2xl mx-auto p-6 ${SECONDARY_COLOR} rounded-2xl shadow-2xl mb-10`}>
+                    <h2 className={`text-3xl font-bold mb-6 text-center text-yellow-400`}>
+                        Masuk Sebagai...
+                    </h2>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Pilihan Pembeli */}
+                        <div className="bg-white p-6 rounded-xl shadow-inner border-t-4 border-yellow-400">
+                            <h3 className="text-2xl font-bold text-blue-900 mb-3 flex items-center">
+                                <User className='w-6 h-6 mr-2'/> Pembeli
+                            </h3>
+                            <p className="mb-4 text-gray-700">
+                                Lanjutkan sebagai pembeli untuk melihat menu, memesan, dan melihat riwayat Anda.
+                            </p>
+                            <button
+                                onClick={grantBuyerAccess}
+                                className={`w-full p-3 ${PRIMARY_COLOR} ${PRIMARY_TEXT} rounded-xl font-bold hover:bg-yellow-500 transition duration-300 shadow-lg`}
+                            >
+                                Lanjutkan Belanja
+                            </button>
+                        </div>
+
+                        {/* Pilihan Penjual / Form Login */}
+                        <div className="bg-white p-6 rounded-xl shadow-inner border-t-4 border-blue-900">
+                            <h3 className="text-2xl font-bold text-blue-900 mb-3 flex items-center">
+                                <Lock className='w-6 h-6 mr-2'/> Penjual (Admin)
+                            </h3>
+                            <p className="mb-3 text-sm font-medium text-red-600">
+                                Akses terbatas. Wajib memasukkan kata sandi!
+                            </p>
+                            <input
+                                type="password"
+                                placeholder="Masukkan Kata Sandi Penjual"
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                className="w-full p-3 mb-4 rounded-lg border-2 border-yellow-400 focus:outline-none focus:border-blue-500"
+                            />
+                            <button
+                                onClick={() => handleSellerLogin(password)}
+                                className={`w-full p-3 bg-blue-700 text-white rounded-xl font-bold hover:bg-blue-600 transition duration-300 shadow-lg`}
+                            >
+                                Masuk sebagai Penjual
+                            </button>
+                            <p className="text-xs text-center text-gray-500 mt-2">
+                                Kata Sandi: `bertigajualmartabak`
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        return (
+            <div className="p-4 md:p-8 pt-20 md:pt-8 min-h-screen"> 
+                <h1 className={`text-4xl font-extrabold mb-8 text-center ${PRIMARY_TEXT}`}>
+                    Selamat Datang di Martabak Mini Mine
+                </h1>
+
+                <RoleSelectionSection />
+
+                {(isBuyerAccessGranted) && (
+                    <div id="catalog-section" className="pt-8">
+                        <h2 className={`text-3xl font-bold mb-6 text-center ${PRIMARY_TEXT} border-b-2 border-yellow-400 pb-2`}>
+                            <ShoppingCart className="inline mr-2 w-7 h-7"/> Katalog Produk
+                        </h2>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                            {products.map((product, index) => (
+                                <div key={index} className={`p-4 ${SECONDARY_COLOR} rounded-2xl shadow-xl transition-transform transform hover:scale-[1.02]`}>
+                                    
+                                    <div className="h-48 w-full mb-4 overflow-hidden rounded-xl">
+                                        <img 
+                                            src={product.imageUrl} 
+                                            alt={product.name} 
+                                            className="w-full h-full object-cover transition duration-300 hover:scale-105" 
+                                            onError={(e) => { 
+                                                e.target.onerror = null; 
+                                                e.target.src = `https://placehold.co/400x300/FFD700/000000?text=${product.name.replace(' ', '+')}`;
+                                            }}
+                                        />
+                                    </div>
+
+                                    <h2 className={`text-2xl font-bold mb-2 ${PRIMARY_COLOR} p-1 rounded text-center ${PRIMARY_TEXT}`}>{product.name}</h2>
+                                    <p className={`text-gray-200 mb-4 text-center`}>{product.desc}</p>
+                                    <p className={`text-4xl font-extrabold text-center ${PRIMARY_COLOR} p-2 rounded-xl ${PRIMARY_TEXT}`}>
+                                        Rp {PRICE.toLocaleString('id-ID')}
+                                    </p>
+                                    <button
+                                        onClick={() => setView('order')}
+                                        className={`w-full mt-4 p-3 ${PRIMARY_COLOR} ${PRIMARY_TEXT} rounded-xl font-bold hover:bg-yellow-500 transition duration-300`}
+                                    >
+                                        Pesan Sekarang!
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+
+                         {/* Tampilkan Review di Beranda */}
+                         <div className="mt-16">
+                            <h2 className={`text-3xl font-bold mb-6 text-center ${PRIMARY_TEXT} border-b-2 border-yellow-400 pb-2`}>
+                                <Star className="inline mr-2 w-6 h-6"/> Ulasan Pelanggan
+                            </h2>
+                            <div className="space-y-4 max-w-4xl mx-auto">
+                                {reviews.length > 0 ? (
+                                    reviews.slice(0, 5).map(review => (
+                                        <div key={review.id} className="p-4 bg-gray-100 rounded-lg shadow-inner">
+                                            <p className="font-semibold text-lg text-blue-800">{review.name}</p>
+                                            <p className="text-gray-600 italic">"{review.reviewText}"</p>
+                                            <div className="text-sm text-gray-500 mt-1 flex justify-between">
+                                                <span>{review.productName}</span>
+                                                <span>{new Date(review.timestamp).toLocaleDateString('id-ID')}</span>
+                                            </div>
+                                        </div>
+                                    ))
+                                ) : (
+                                    <p className="text-center text-gray-600">Belum ada ulasan. Jadilah yang pertama!</p>
+                                )}
+                            </div>
+                            <div className="text-center mt-6">
+                                <button onClick={() => setView('reviews')} className={`font-semibold text-blue-900 hover:text-blue-500 underline`}>
+                                    Lihat Semua Ulasan &gt;&gt;
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    // --- RENDERER FORM PEMESANAN (ORDER FORM) ---
+    const OrderForm = () => {
+        if (!isBuyerAccessGranted) {
+             return (
+                <div className="p-4 text-center pt-20 min-h-screen">
+                    <h1 className="text-xl font-bold text-red-500">Akses Ditolak. Silakan pilih peran di Beranda terlebih dahulu.</h1>
+                    <button onClick={() => setView('home')} className="mt-4 text-blue-500 underline">Ke Halaman Beranda</button>
+                </div>
+            );
+        }
+
+        const [formData, setFormData] = useState({
+            name: '',
+            phone: '',
+            address: '',
+            product: 'Martabak Coklat Mini',
+            paymentMethod: '',
+        });
+
+        const handleChange = (e) => {
+            const { name, value } = e.target;
+            setFormData(prev => ({ ...prev, [name]: value }));
+        };
+
+        const handleSubmit = (e) => {
+            e.preventDefault();
+            if (!formData.paymentMethod) {
+                setMessage('Mohon pilih metode pembayaran terlebih dahulu.');
+                return;
+            }
+
+            const newOrder = {
+                id: generateUniqueId(),
+                ...formData,
+                product: { name: formData.product, price: PRICE },
+                deliveryDate: getDeliveryDate(),
+                timestamp: Date.now(),
+                status: 'Menunggu Pembayaran',
+                buyerId: userId, // Gunakan Local User ID
+            };
+            setCurrentOrder(newOrder);
+            setView('payment');
+        };
+
+        return (
+            <div className="p-4 md:p-8 pt-20 md:pt-8 min-h-screen">
+                <h1 className={`text-3xl font-bold mb-6 text-center ${SECONDARY_COLOR} ${SECONDARY_TEXT} p-3 rounded-xl shadow-lg`}>
+                    Formulir Pemesanan Martabak Mini
+                </h1>
+                <div className="max-w-xl mx-auto bg-white p-6 rounded-xl shadow-2xl border-t-8 border-yellow-400">
+                    <form onSubmit={handleSubmit}>
+                        <InputField label="Nama Lengkap" name="name" value={formData.name} onChange={handleChange} required />
+                        <InputField label="Nomor Telepon" name="phone" type="tel" value={formData.phone} onChange={handleChange} required />
+                        <TextAreaField label="Alamat Pengiriman" name="address" value={formData.address} onChange={handleChange} required />
+
+                        <SelectField label="Produk yang Dipesan (Harga: Rp 5.000)" name="product" value={formData.product} onChange={handleChange}>
+                            <option value="Martabak Coklat Mini">Martabak Coklat Mini</option>
+                            <option value="Martabak Keju Mini">Martabak Keju Mini</option>
+                        </SelectField>
+
+                        <SelectField label="Pilih Metode Pembayaran (E-Wallet)" name="paymentMethod" value={formData.paymentMethod} onChange={handleChange} required>
+                            <option value="" disabled>Pilih salah satu</option>
+                            <option value="DANA">DANA</option>
+                            <option value="ShopeePay">ShopeePay</option>
+                            <option value="GoPay">GoPay</option>
+                        </SelectField>
+
+                        <div className="mb-4 p-3 bg-blue-100 rounded-lg border border-blue-300">
+                            <p className="font-semibold text-blue-800">
+                                Estimasi Pengiriman: <span className="text-red-600">{getDeliveryDate()}</span>
+                            </p>
+                            <p className="text-sm text-blue-700">Kami akan mengirimkannya 3 hari dari tanggal pesanan dibuat.</p>
+                        </div>
+
+                        <button
+                            type="submit"
+                            className={`w-full p-4 ${PRIMARY_COLOR} ${PRIMARY_TEXT} rounded-xl font-extrabold text-lg hover:bg-yellow-500 transition duration-300 shadow-md`}
+                        >
+                            Lanjutkan ke Pembayaran
+                        </button>
+                    </form>
+                </div>
+            </div>
+        );
+    };
+
+    // --- RENDERER SIMULASI PEMBAYARAN (PAYMENT SIMULATION) ---
+    const PaymentSimulationView = () => {
+        if (!currentOrder) {
+            return <div className="p-4 text-center min-h-screen">Data pesanan tidak ditemukan. Kembali ke <button onClick={() => setView('order')} className="text-blue-500 underline">Form Pemesanan</button>.</div>;
+        }
+
+        const handlePaymentConfirm = () => {
+            // Simulasikan pembayaran sukses dan simpan pesanan ke Local Storage
+            const finalOrder = {
+                ...currentOrder,
+                status: 'Pembayaran Diterima',
+                timestamp: Date.now(), // Perbarui timestamp saat dikonfirmasi
+            };
+            
+            saveNewOrder(finalOrder); // Simpan pesanan ke Local Storage
+
+            setMessage(`Pembayaran berhasil disimulasikan! Pesanan Martabak Mini ${finalOrder.product.name} Anda sedang diproses.`);
+            setCurrentOrder(null); // Clear current order data
+            setView('history'); // Arahkan ke Riwayat Pembelian
+        };
+
+        const paymentDetails = {
+            'DANA': { logo: '💰', number: '0812-3456-7890 (a.n. Martabak Mine)' },
+            'ShopeePay': { logo: '🧡', number: '0812-3456-7890 (a.n. Martabak Mine)' },
+            'GoPay': { logo: '💚', number: '0812-3456-7890 (a.n. Martabak Mine)' },
+        }[currentOrder.paymentMethod] || { logo: '❓', number: 'Hubungi Penjual' };
+
+        return (
+            <div className="p-4 md:p-8 pt-20 md:pt-8 min-h-screen">
+                <h1 className={`text-3xl font-bold mb-6 text-center ${PRIMARY_TEXT}`}>
+                    Halaman Pembayaran - {currentOrder.paymentMethod}
+                </h1>
+                <div className="max-w-md mx-auto bg-white p-6 rounded-xl shadow-2xl border-t-8 border-blue-900">
+                    <div className="text-center mb-6">
+                        <p className="text-gray-600 font-semibold text-lg">Total Pembayaran:</p>
+                        <p className={`text-5xl font-extrabold ${PRIMARY_TEXT}`}>
+                            Rp {currentOrder.product.price.toLocaleString('id-ID')}
+                        </p>
+                    </div>
+
+                    <div className="space-y-4">
+                        <div className="p-4 bg-yellow-100 rounded-lg border-2 border-yellow-400">
+                            <h3 className="text-xl font-bold text-yellow-800 flex items-center">
+                                {paymentDetails.logo} Pembayaran via {currentOrder.paymentMethod}
+                            </h3>
+                            <p className="mt-2 text-gray-700">
+                                Silakan transfer ke nomor virtual account / nomor telepon di bawah ini:
+                            </p>
+                            <p className={`text-xl font-mono mt-1 p-2 ${SECONDARY_COLOR} ${SECONDARY_TEXT} rounded-md text-center`}>
+                                {paymentDetails.number}
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="mt-6 p-4 bg-gray-100 rounded-lg">
+                        <p className="text-sm font-semibold">Detail Pesanan:</p>
+                        <p className="text-sm">Produk: {currentOrder.product.name}</p>
+                        <p className="text-sm">Penerima: {currentOrder.name}</p>
+                        <p className="text-sm text-green-600">
+                            Estimasi Kirim: {currentOrder.deliveryDate}
+                        </p>
+                    </div>
+
+                    <button
+                        onClick={handlePaymentConfirm}
+                        className={`w-full mt-6 p-4 ${PRIMARY_COLOR} ${PRIMARY_TEXT} rounded-xl font-extrabold text-lg hover:bg-yellow-500 transition duration-300 shadow-md`}
+                    >
+                        Konfirmasi Pembayaran (Simulasi)
+                    </button>
+                    <p className="text-xs text-center text-red-500 mt-2">
+                        *Ini adalah simulasi. Setelah konfirmasi, pesanan akan dianggap lunas dan masuk riwayat.
+                    </p>
+                </div>
+            </div>
+        );
+    };
+
+    // --- RENDERER RIWAYAT PEMBELIAN (HISTORY) ---
+    const HistoryView = () => {
+        if (!isBuyerAccessGranted) {
+             return (
+                <div className="p-4 text-center pt-20 min-h-screen">
+                    <h1 className="text-xl font-bold text-red-500">Akses Ditolak. Silakan pilih peran di Beranda terlebih dahulu.</h1>
+                    <button onClick={() => setView('home')} className="mt-4 text-blue-500 underline">Ke Halaman Beranda</button>
+                </div>
+            );
+        }
+
+        // Filter pesanan berdasarkan Local User ID
+        const userOrders = orders.filter(order => order.buyerId === userId);
+
+        return (
+            <div className="p-4 md:p-8 pt-20 md:pt-8 min-h-screen">
+                <h1 className={`text-3xl font-bold mb-6 text-center ${PRIMARY_TEXT}`}>
+                    Riwayat Pembelian Anda
+                </h1>
+                <div className="max-w-4xl mx-auto space-y-4">
+                    {userOrders.length > 0 ? (
+                        userOrders.map((order) => (
+                            <div key={order.id} className={`p-4 rounded-xl shadow-lg ${SECONDARY_COLOR} ${SECONDARY_TEXT} border-l-8 border-yellow-400`}>
+                                <div className="flex justify-between items-start mb-2 border-b border-blue-700 pb-2">
+                                    <div>
+                                        <p className="text-lg font-bold">{order.product.name}</p>
+                                        <p className="text-sm text-gray-300">ID Pesanan: {order.id}</p>
+                                    </div>
+                                    <p className={`text-xl font-extrabold ${PRIMARY_COLOR} ${PRIMARY_TEXT} px-3 py-1 rounded-full`}>
+                                        Rp {order.product.price.toLocaleString('id-ID')}
+                                    </p>
+                                </div>
+                                <p className="text-sm"><strong>Status:</strong> <span className="font-semibold text-green-400">{order.status}</span></p>
+                                <p className="text-sm"><strong>Pembayaran:</strong> {order.paymentMethod}</p>
+                                <p className="text-sm"><strong>Tanggal Pesan:</strong> {new Date(order.timestamp).toLocaleDateString('id-ID')}</p>
+                                <p className="text-sm"><strong>Estimasi Kirim:</strong> {order.deliveryDate}</p>
+                                <p className="text-sm mt-1"><strong>Alamat:</strong> {order.address.substring(0, 50)}...</p>
+                            </div>
+                        ))
+                    ) : (
+                        <div className="text-center p-8 bg-gray-100 rounded-xl">
+                            <ShoppingCart className="w-12 h-12 mx-auto text-gray-400 mb-3" />
+                            <p className="text-gray-700">Anda belum pernah melakukan pembelian. Ayo, pesan martabak mini Anda sekarang!</p>
+                            <button onClick={() => setView('home')} className={`mt-4 p-2 ${PRIMARY_COLOR} ${PRIMARY_TEXT} rounded-lg font-semibold`}>
+                                Lihat Produk
+                            </button>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    };
+
+    // --- RENDERER DASHBOARD PENJUAL (SELLER DASHBOARD) ---
+    const SellerDashboard = () => {
+        if (!isSeller) {
+            return (
+                <div className="p-4 text-center pt-20 min-h-screen">
+                    <h1 className="text-xl font-bold text-red-500">Akses Ditolak. Silakan masuk sebagai Penjual.</h1>
+                    <button onClick={() => setView('home')} className="mt-4 text-blue-500 underline">Ke Halaman Beranda</button>
+                </div>
+            );
+        }
+
+        const buyersList = orders.reduce((acc, order) => {
+            if (!acc[order.name]) {
+                acc[order.name] = { total: 0, orders: 0, phone: order.phone };
+            }
+            acc[order.name].total += order.product.price;
+            acc[order.name].orders += 1;
+            return acc;
+        }, {});
+
+        const sortedBuyers = Object.entries(buyersList).sort(([, a], [, b]) => b.total - a.total);
+
+
+        return (
+            <div className="p-4 md:p-8 pt-20 md:pt-8 min-h-screen">
+                <h1 className={`text-4xl font-extrabold mb-8 text-center ${SECONDARY_COLOR} ${SECONDARY_TEXT} p-3 rounded-xl shadow-lg flex items-center justify-center`}>
+                    <TrendingUp className="w-8 h-8 mr-3"/> Dashboard Penjualan
+                </h1>
+                <p className='text-center text-sm mb-4 text-gray-600'>Anda masuk sebagai Admin (Sesi Lokal)</p>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                    <StatCard
+                        icon={DollarSign}
+                        title="Total Uang Diterima"
+                        value={`Rp ${totalSales.toLocaleString('id-ID')}`}
+                        color="bg-green-100 text-green-700"
+                    />
+                    <StatCard
+                        icon={ShoppingCart}
+                        title="Total Pesanan"
+                        value={orders.length}
+                        color="bg-blue-100 text-blue-700"
+                    />
+                    <StatCard
+                        icon={Users}
+                        title="Pembeli Unik"
+                        value={uniqueBuyers}
+                        color="bg-purple-100 text-purple-700"
+                    />
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    {/* Riwayat Pembelian Terbaru */}
+                    <DashboardSection title="Riwayat Pembelian Terbaru" icon={History}>
+                        {orders.length > 0 ? (
+                            <div className="overflow-x-auto">
+                                <table className="min-w-full bg-white rounded-lg shadow-md">
+                                    <thead>
+                                        <tr className={`${SECONDARY_COLOR} ${SECONDARY_TEXT} text-left`}>
+                                            <th className="p-3">Nama Pembeli</th>
+                                            <th className="p-3">Produk</th>
+                                            <th className="p-3">Harga</th>
+                                            <th className="p-3">Tanggal</th>
+                                            <th className="p-3">Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {orders.slice(0, 5).map((order) => (
+                                            <tr key={order.id} className="border-b hover:bg-yellow-50">
+                                                <td className="p-3 text-gray-800">{order.name}</td>
+                                                <td className="p-3 text-gray-600">{order.product.name}</td>
+                                                <td className="p-3 text-green-600 font-semibold">Rp {order.product.price.toLocaleString('id-ID')}</td>
+                                                <td className="p-3 text-sm">{new Date(order.timestamp).toLocaleDateString('id-ID')}</td>
+                                                <td className="p-3 text-sm font-medium text-blue-600">{order.status}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        ) : (
+                            <p className="text-gray-500">Belum ada pesanan masuk.</p>
+                        )}
+                    </DashboardSection>
+
+                    {/* Pembeli Terbanyak */}
+                    <DashboardSection title="Data Pembeli" icon={Users}>
+                        {sortedBuyers.length > 0 ? (
+                            <div className="space-y-3">
+                                {sortedBuyers.map(([name, data]) => (
+                                    <div key={name} className="flex justify-between items-center p-3 bg-white rounded-lg shadow-sm border-l-4 border-yellow-400">
+                                        <div>
+                                            <p className="font-semibold text-blue-800">{name}</p>
+                                            <p className="text-xs text-gray-500">{data.phone}</p>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className="font-bold text-lg text-green-600">Rp {data.total.toLocaleString('id-ID')}</p>
+                                            <p className="text-xs text-gray-600">{data.orders}x Beli</p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <p className="text-gray-500">Belum ada data pembeli.</p>
+                        )}
+                    </DashboardSection>
+                </div>
+            </div>
+        );
+    };
+
+    // --- RENDERER ULASAN (REVIEWS) ---
+    const ReviewView = () => {
+         if (!isBuyerAccessGranted) {
+             return (
+                <div className="p-4 text-center pt-20 min-h-screen">
+                    <h1 className="text-xl font-bold text-red-500">Akses Ditolak. Silakan pilih peran di Beranda terlebih dahulu.</h1>
+                    <button onClick={() => setView('home')} className="mt-4 text-blue-500 underline">Ke Halaman Beranda</button>
+                </div>
+            );
+        }
+
+        const [reviewText, setReviewText] = useState('');
+        const [reviewerName, setReviewerName] = useState('');
+        const [productName, setProductName] = useState('Martabak Coklat Mini');
+
+        const handleSubmitReview = (e) => {
+            e.preventDefault();
+            if (!reviewText.trim() || !reviewerName.trim()) {
+                setMessage('Nama dan ulasan tidak boleh kosong.');
+                return;
+            }
+
+            const newReview = {
+                id: generateUniqueId(),
+                name: reviewerName.trim(),
+                reviewText: reviewText.trim(),
+                productName: productName,
+                timestamp: Date.now(),
+                userId: userId,
+            };
+
+            saveNewReview(newReview); // Simpan ke Local Storage
+
+            setMessage('Terima kasih! Ulasan Anda telah berhasil disimpan.');
+            setReviewText('');
+            setReviewerName('');
+        };
+
+        return (
+            <div className="p-4 md:p-8 pt-20 md:pt-8 min-h-screen">
+                <h1 className={`text-3xl font-bold mb-6 text-center ${PRIMARY_TEXT}`}>
+                    <Star className="inline w-7 h-7 mr-2"/> Beri Ulasan & Lihat Pendapat
+                </h1>
+
+                {/* Form Ulasan */}
+                <div className="max-w-xl mx-auto bg-yellow-100 p-6 rounded-xl shadow-lg border-t-4 border-yellow-400 mb-8">
+                    <h2 className="text-2xl font-semibold mb-4 text-blue-800">Tulis Ulasan Anda</h2>
+                    <form onSubmit={handleSubmitReview}>
+                        <InputField label="Nama Anda" name="reviewerName" value={reviewerName} onChange={(e) => setReviewerName(e.target.value)} required />
+                        <SelectField label="Produk yang Diulas" name="productName" value={productName} onChange={(e) => setProductName(e.target.value)}>
+                            <option value="Martabak Coklat Mini">Martabak Coklat Mini</option>
+                            <option value="Martabak Keju Mini">Martabak Keju Mini</option>
+                        </SelectField>
+                        <TextAreaField label="Ulasan Anda" name="reviewText" value={reviewText} onChange={(e) => setReviewText(e.target.value)} required rows={4} />
+
+                        <button
+                            type="submit"
+                            className={`w-full p-3 ${SECONDARY_COLOR} ${SECONDARY_TEXT} rounded-xl font-bold hover:bg-blue-700 transition duration-300 shadow-md`}
+                        >
+                            Kirim Ulasan
+                        </button>
+                    </form>
+                </div>
+
+                {/* Daftar Ulasan */}
+                <div className="max-w-3xl mx-auto">
+                    <h2 className="text-2xl font-bold mb-4 text-center text-blue-900 border-b-2 border-yellow-400 pb-2">
+                        Semua Ulasan ({reviews.length})
+                    </h2>
+                    <div className="space-y-4">
+                        {reviews.length > 0 ? (
+                            reviews.map(review => (
+                                <div key={review.id} className="p-4 bg-white rounded-xl shadow-md border-l-4 border-blue-400">
+                                    <div className="flex justify-between items-start mb-1">
+                                        <p className="font-bold text-xl text-blue-900">{review.name}</p>
+                                        <p className="text-sm text-gray-500">{new Date(review.timestamp).toLocaleDateString('id-ID')}</p>
+                                    </div>
+                                    <p className="text-sm italic text-yellow-600 mb-2">Mengulas: {review.productName}</p>
+                                    <p className="text-gray-700">"{review.reviewText}"</p>
+                                </div>
+                            ))
+                        ) : (
+                            <p className="text-center text-gray-600">Belum ada ulasan.</p>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    // --- UTILITY COMPONENTS ---
+
+    const InputField = ({ label, name, value, onChange, type = 'text', required = false }) => (
+        <div className="mb-4">
+            <label htmlFor={name} className="block text-sm font-medium text-gray-700 mb-1">
+                {label} {required && <span className="text-red-500">*</span>}
+            </label>
+            <input
+                type={type}
+                id={name}
+                name={name}
+                value={value}
+                onChange={onChange}
+                required={required}
+                className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-150"
+            />
+        </div>
+    );
+
+    const TextAreaField = ({ label, name, value, onChange, required = false, rows = 3 }) => (
+        <div className="mb-4">
+            <label htmlFor={name} className="block text-sm font-medium text-gray-700 mb-1">
+                {label} {required && <span className="text-red-500">*</span>}
+            </label>
+            <textarea
+                id={name}
+                name={name}
+                value={value}
+                onChange={onChange}
+                required={required}
+                rows={rows}
+                className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-150"
+            ></textarea>
+        </div>
+    );
+
+    const SelectField = ({ label, name, value, onChange, children, required = false }) => (
+        <div className="mb-4">
+            <label htmlFor={name} className="block text-sm font-medium text-gray-700 mb-1">
+                {label} {required && <span className="text-red-500">*</span>}
+            </label>
+            <select
+                id={name}
+                name={name}
+                value={value}
+                onChange={onChange}
+                required={required}
+                className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-150 bg-white appearance-none"
+            >
+                {children}
+            </select>
+        </div>
+    );
+
+    const StatCard = ({ icon: Icon, title, value, color }) => (
+        <div className={`p-5 rounded-xl shadow-lg flex items-center space-x-4 ${color}`}>
+            <Icon className="w-8 h-8 opacity-75" />
+            <div>
+                <p className="text-sm font-medium opacity-80">{title}</p>
+                <p className="text-2xl font-bold">{value}</p>
+            </div>
+        </div>
+    );
+
+    const DashboardSection = ({ title, icon: Icon, children }) => (
+        <div className="p-6 bg-white rounded-xl shadow-xl border-t-8 border-blue-400">
+            <h2 className="text-2xl font-bold mb-4 text-blue-900 flex items-center">
+                <Icon className="w-6 h-6 mr-2 text-yellow-500" /> {title}
+            </h2>
+            {children}
+        </div>
+    );
+
+    // --- RENDER UTAMA ---
+
+    let Content;
+
+    switch (view) {
+        case 'order':
+            Content = <OrderForm />;
+            break;
+        case 'history':
+            Content = <HistoryView />;
+            break;
+        case 'reviews':
+            Content = <ReviewView />;
+            break;
+        case 'sellerDashboard':
+            Content = <SellerDashboard />;
+            break;
+        case 'payment':
+            Content = <PaymentSimulationView />;
+            break;
+        case 'home':
+        default:
+            Content = <HomeView />;
+            break;
+    }
+
+    return (
+        <div className={`min-h-screen ${PRIMARY_COLOR} font-sans`}>
+            {/* Header / Top Navigation (Desktop) */}
+            <header className={`fixed top-0 left-0 right-0 z-40 ${SECONDARY_COLOR} shadow-xl hidden md:block`}>
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center h-16">
+                    <div className="text-2xl font-black text-yellow-400 flex items-center">
+                        <Smile className="w-6 h-6 mr-2"/> MARTABAK MINI MINE
+                    </div>
+                    <nav className="flex space-x-4">
+                        <NavButton icon={Home} label="Beranda" target="home" currentView={view} setView={setView} />
+                        {isBuyerAccessGranted && (
+                            <>
+                                <NavButton icon={ShoppingCart} label="Pesan" target="order" currentView={view} setView={setView} />
+                                <NavButton icon={History} label="Riwayat" target="history" currentView={view} setView={setView} />
+                                <NavButton icon={Star} label="Ulasan" target="reviews" currentView={view} setView={setView} />
+                            </>
+                        )}
+                        {isSeller && (
+                            <NavButton icon={TrendingUp} label="Admin Dashboard" target="sellerDashboard" currentView={view} setView={setView} />
+                        )}
+                        
+                        {(isBuyerAccessGranted) ? (
+                             <button
+                                onClick={handleLogout}
+                                className={`text-sm font-semibold p-2 rounded-full bg-red-500 text-white hover:bg-red-600 transition duration-200`}
+                            >
+                                Logout/Reset
+                            </button>
+                        ) : (
+                             <button
+                                onClick={() => document.getElementById('catalog-section')?.scrollIntoView({ behavior: 'smooth' })}
+                                className={`flex items-center p-2 rounded-lg font-semibold transition-colors duration-200 text-white hover:bg-blue-700`}
+                                title="Pilih Akses"
+                            >
+                                <Lock className="w-5 h-5 mr-2" />
+                                Pilih Akses
+                            </button>
+                        )}
+                    </nav>
+                </div>
+            </header>
+
+            {/* Main Content */}
+            <main className="pb-20 md:pb-0">
+                {/* Global Message Box */}
+                {message && (
+                    <div className="fixed top-16 md:top-20 left-1/2 transform -translate-x-1/2 z-50 p-3 bg-green-500 text-white rounded-lg shadow-xl animate-bounce">
+                        {message}
+                        <button onClick={() => setMessage('')} className="ml-4 font-bold">X</button>
+                    </div>
+                )}
+                {Content}
+            </main>
+
+            {/* Bottom Navigation (Mobile) */}
+            <NavBar />
+
+            {/* Footer */}
+            <footer className={`w-full p-4 ${SECONDARY_COLOR} text-center text-gray-300 text-sm mt-8`}>
+                <p className="font-semibold">Martabak Mini Mine &copy; 2024</p>
+                <p>Data disimpan secara lokal di browser Anda. Data tidak dapat dibagikan atau dilihat di perangkat lain.</p>
+                <p className="text-xs mt-1">
+                    ID Sesi Lokal Saat Ini: <span className="font-mono text-yellow-400 break-all">{userId}</span>
+                </p>
+            </footer>
+
+        </div>
+    );
+};
+
+// Component untuk Tombol Navigasi Desktop
+const NavButton = ({ icon: Icon, label, target, currentView, setView }) => {
+    const isCurrent = currentView === target;
+    return (
+        <button
+            onClick={() => setView(target)}
+            className={`flex items-center p-2 rounded-lg font-semibold transition-colors duration-200 ${
+                isCurrent ? 'bg-yellow-400 text-blue-900 shadow-md' : 'text-white hover:bg-blue-700'
+            }`}
+        >
+            <Icon className="w-5 h-5 mr-2" />
+            {label}
+        </button>
+    );
+};
+
+export default App;
